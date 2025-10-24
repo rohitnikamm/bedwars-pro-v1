@@ -53,7 +53,7 @@ public class DebugMapCommand implements ICommand {
         // Only support toggle control; otherwise treat all args as the map name
         if (first.equalsIgnoreCase("toggle")) {
             enabled = !enabled;
-            sender.addChatMessage(new ChatComponentText("[BedwarsProv] dbgmap " + (enabled ? "enabled" : "disabled")));
+            sender.addChatMessage(new ChatComponentText("[BedwarsProV1] dbgmap " + (enabled ? "enabled" : "disabled")));
             LOGGER.info("[BedwarsProv] dbgmap toggled, now {}", enabled ? "enabled" : "disabled");
             // If disabled, clear HUD immediately
             if (!enabled && hudListener != null) {
@@ -63,7 +63,7 @@ public class DebugMapCommand implements ICommand {
         }
 
         if (!enabled) {
-            sender.addChatMessage(new ChatComponentText("[BedwarsProv] dbgmap is disabled. Use /dbgmap toggle to enable."));
+            sender.addChatMessage(new ChatComponentText("[BedwarsProV1] dbgmap is disabled. Use /dbgmap toggle to enable."));
             return;
         }
 
@@ -95,11 +95,29 @@ public class DebugMapCommand implements ICommand {
     public List<String> addTabCompletionOptions(ICommandSender sender, String[] args, BlockPos pos) {
         List<String> all = manager.getAllMapNames();
         List<String> results = new ArrayList<>();
-        if (args == null || args.length == 0) return results;
+        if (args == null) return results;
+
+        // If nothing typed after the command, suggest all maps and the toggle subcommand
+        if (args.length == 0 || (args.length == 1 && args[0].trim().isEmpty())) {
+            // include toggle as first suggestion
+            results.add("toggle");
+            for (String name : all) {
+                if (results.size() >= 100) break;
+                results.add(name);
+            }
+            return results;
+        }
+
+        // Build the current prefix from the arguments typed so far
         String prefix = String.join(" ", args).trim().toLowerCase();
-        if (prefix.length() == 0) return results;
+        if (prefix.isEmpty()) return results;
+
+        // If user is typing 'tog...' suggest toggle
+        if ("toggle".startsWith(prefix)) results.add("toggle");
+
+        // Suggest canonical map names that start with the prefix (case-insensitive)
         for (String name : all) {
-            if (results.size() >= 25) break;
+            if (results.size() >= 100) break;
             if (name.toLowerCase().startsWith(prefix)) results.add(name);
         }
         return results;
