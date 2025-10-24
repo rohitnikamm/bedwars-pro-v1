@@ -27,10 +27,6 @@ public class ScoreboardMapReader {
     private int debugCooldown = 0; // ticks until next debug dump
     private static final int DEBUG_COOLDOWN_TICKS = 100; // rate-limit debug dumps
 
-    public ScoreboardMapReader(MapInfoManager manager, Logger logger, MapUpdateListener hudListener) {
-        this(manager, logger, hudListener, false);
-    }
-
     public ScoreboardMapReader(MapInfoManager manager, Logger logger, MapUpdateListener hudListener, boolean debug) {
         this.manager = manager;
         this.logger = logger;
@@ -39,8 +35,15 @@ public class ScoreboardMapReader {
         MinecraftForge.EVENT_BUS.register(this);
     }
 
+    // helper to safely log info when logger may be null (silences static analyzer warnings)
+    private void logInfo(String fmt, Object... args) {
+        if (logger != null) logger.info(fmt, args);
+    }
+
     @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
+        // Respect global debug toggle: if disabled, do nothing
+        if (!DebugControl.isEnabled()) return;
         if (mc == null || mc.theWorld == null) return;
         Scoreboard sb = mc.theWorld.getScoreboard();
         // try display slot 1 first (sidebar), but also scan all objectives as a fallback
@@ -53,7 +56,7 @@ public class ScoreboardMapReader {
                 String raw = score.getPlayerName();
                 String clean = stripFormatting(raw).trim();
                 if (debug && debugCooldown == 0) {
-                    if (logger != null) logger.info("[BedwarsProv-debug] sidebar line: '{}' -> cleaned: '{}'", raw, clean);
+                    logInfo("[BedwarsProv-debug] sidebar line: '{}' -> cleaned: '{}'", raw, clean);
                 }
                 if (clean.startsWith("Map:")) bestRaw = raw;
             }
@@ -67,7 +70,7 @@ public class ScoreboardMapReader {
                         String raw = score.getPlayerName();
                         String clean = stripFormatting(raw).trim();
                         if (debug && debugCooldown == 0) {
-                            if (logger != null) logger.info("[BedwarsProv-debug] obj='{}' line: '{}' -> cleaned: '{}'", obj.getName(), raw, clean);
+                            logInfo("[BedwarsProv-debug] obj='{}' line: '{}' -> cleaned: '{}'", obj.getName(), raw, clean);
                         }
                         if (clean.startsWith("Map:")) bestRaw = raw; // last seen wins
                     }
@@ -97,9 +100,9 @@ public class ScoreboardMapReader {
                     lastMap = mapName;
                     MapDetails details = manager.getDetailsForMap(mapName);
                     if (details != null) {
-                        logger.info("[BedwarsProv] Map detected: {} -> {}", mapName, details);
+                        logInfo("[BedwarsProv] Map detected: {} -> {}", mapName, details);
                     } else {
-                        logger.info("[BedwarsProv] Map detected: {} -> no details in maps.json", mapName);
+                        logInfo("[BedwarsProv] Map detected: {} -> no details in maps.json", mapName);
                     }
                     if (hudListener != null) hudListener.onMapUpdated(mapName, details);
                 }
@@ -115,12 +118,14 @@ public class ScoreboardMapReader {
     // Listen to client chat messages so we can detect map info Hypixel sometimes sends as chat
     @SubscribeEvent
     public void onClientChat(ClientChatReceivedEvent event) {
+        // Respect global debug toggle: if disabled, ignore chat detections
+        if (!DebugControl.isEnabled()) return;
         try {
             if (event == null || event.message == null) return;
             String raw = event.message.getUnformattedText().trim();
             if (raw.isEmpty()) return;
             if (debug) {
-                if (logger != null) logger.info("[BedwarsProv-debug] chat: '{}'", raw);
+                logInfo("[BedwarsProv-debug] chat: '{}'", raw);
             }
 
             // Common Hypixel message: "You are currently playing on <MapName>"
@@ -135,9 +140,9 @@ public class ScoreboardMapReader {
                         lastMap = mapName;
                         MapDetails details = manager.getDetailsForMap(mapName);
                         if (details != null) {
-                            logger.info("[BedwarsProv] Map detected (chat): {} -> {}", mapName, details);
+                            logInfo("[BedwarsProv] Map detected (chat): {} -> {}", mapName, details);
                         } else {
-                            logger.info("[BedwarsProv] Map detected (chat): {} -> no details in maps.json", mapName);
+                            logInfo("[BedwarsProv] Map detected (chat): {} -> no details in maps.json", mapName);
                         }
                         if (hudListener != null) hudListener.onMapUpdated(mapName, details);
                     }
@@ -155,9 +160,9 @@ public class ScoreboardMapReader {
                         lastMap = mapName;
                         MapDetails details = manager.getDetailsForMap(mapName);
                         if (details != null) {
-                            logger.info("[BedwarsProv] Map detected (chat): {} -> {}", mapName, details);
+                            logInfo("[BedwarsProv] Map detected (chat): {} -> {}", mapName, details);
                         } else {
-                            logger.info("[BedwarsProv] Map detected (chat): {} -> no details in maps.json", mapName);
+                            logInfo("[BedwarsProv] Map detected (chat): {} -> no details in maps.json", mapName);
                         }
                         if (hudListener != null) hudListener.onMapUpdated(mapName, details);
                     }
@@ -167,26 +172,6 @@ public class ScoreboardMapReader {
         } catch (Throwable t) {
             if (logger != null) logger.debug("[BedwarsProv] error parsing chat: {}", t.toString());
         }
-    }
-
-    // Exposed helper for testing: feed a raw scoreboard line (with formatting) and it will log / return details
-    public MapDetails processLine(String raw) {
-        String clean = stripFormatting(raw).trim();
-        if (clean.startsWith("Map:")) {
-            String mapName = clean.substring("Map:".length()).trim();
-            if (!mapName.equalsIgnoreCase(lastMap)) {
-                lastMap = mapName;
-                MapDetails details = manager.getDetailsForMap(mapName);
-                if (details != null) {
-                    logger.info("[BedwarsProv] Map detected: {} -> {}", mapName, details);
-                } else {
-                    logger.info("[BedwarsProv] Map detected: {} -> no details in maps.json", mapName);
-                }
-                if (hudListener != null) hudListener.onMapUpdated(mapName, details);
-                return details;
-            }
-        }
-        return null;
     }
 
     private String stripFormatting(String s) {

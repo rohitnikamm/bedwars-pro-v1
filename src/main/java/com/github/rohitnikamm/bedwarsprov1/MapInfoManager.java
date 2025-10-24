@@ -11,14 +11,17 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
 public class MapInfoManager {
     private static final Logger LOGGER = LogManager.getLogger("BedwarsProv");
     private final Map<String, MapDetails> maps;
+    private final List<String> canonicalNames; // original names for tab completion
 
     public MapInfoManager(String resourcePath) {
         Map<String, MapDetails> loaded;
@@ -35,17 +38,26 @@ public class MapInfoManager {
         }
         // normalize keys to lower-case and stripped form for robust lookup
         Map<String, MapDetails> normalized = new HashMap<>();
+        List<String> names = new ArrayList<>();
         for (Map.Entry<String, MapDetails> e : loaded.entrySet()) {
             if (e.getKey() == null) continue;
             String key = normalizeKey(e.getKey());
             normalized.put(key, e.getValue());
+            names.add(e.getKey());
         }
         this.maps = Collections.unmodifiableMap(normalized);
+        // sort canonical names for nicer tab completion
+        Collections.sort(names, String.CASE_INSENSITIVE_ORDER);
+        this.canonicalNames = Collections.unmodifiableList(names);
     }
 
     public MapDetails getDetailsForMap(String mapName) {
         if (mapName == null) return null;
         return maps.get(normalizeKey(mapName));
+    }
+
+    public List<String> getAllMapNames() {
+        return canonicalNames;
     }
 
     private String normalizeKey(String s) {
