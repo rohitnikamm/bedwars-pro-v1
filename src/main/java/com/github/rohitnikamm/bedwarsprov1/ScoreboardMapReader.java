@@ -4,6 +4,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.scoreboard.Score;
 import net.minecraft.scoreboard.ScoreObjective;
 import net.minecraft.scoreboard.Scoreboard;
+import net.minecraftforge.client.event.ClientChatReceivedEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
@@ -52,7 +53,7 @@ public class ScoreboardMapReader {
                 String raw = score.getPlayerName();
                 String clean = stripFormatting(raw).trim();
                 if (debug && debugCooldown == 0) {
-                    try { logger.info("[BedwarsProv-debug] sidebar line: '{}' -> cleaned: '{}'", raw, clean); } catch (Throwable t) {}
+                    if (logger != null) logger.info("[BedwarsProv-debug] sidebar line: '{}' -> cleaned: '{}'", raw, clean);
                 }
                 if (clean.startsWith("Map:")) bestRaw = raw;
             }
@@ -66,12 +67,12 @@ public class ScoreboardMapReader {
                         String raw = score.getPlayerName();
                         String clean = stripFormatting(raw).trim();
                         if (debug && debugCooldown == 0) {
-                            try { logger.info("[BedwarsProv-debug] obj='{}' line: '{}' -> cleaned: '{}'", obj.getName(), raw, clean); } catch (Throwable t) {}
+                            if (logger != null) logger.info("[BedwarsProv-debug] obj='{}' line: '{}' -> cleaned: '{}'", obj.getName(), raw, clean);
                         }
                         if (clean.startsWith("Map:")) bestRaw = raw; // last seen wins
                     }
                 } catch (Throwable t) {
-                    // some objectives may throw in different mappings; ignore them
+                    if (logger != null) logger.debug("[BedwarsProv] ignored error scanning objective {}: {}", obj.getName(), t.toString());
                 }
                 if (bestRaw != null) break; // stop early if found
             }
@@ -111,6 +112,64 @@ public class ScoreboardMapReader {
         }
     }
 
+    // Listen to client chat messages so we can detect map info Hypixel sometimes sends as chat
+    @SubscribeEvent
+    public void onClientChat(ClientChatReceivedEvent event) {
+        try {
+            if (event == null || event.message == null) return;
+            String raw = event.message.getUnformattedText().trim();
+            if (raw.isEmpty()) return;
+            if (debug) {
+                if (logger != null) logger.info("[BedwarsProv-debug] chat: '{}'", raw);
+            }
+
+            // Common Hypixel message: "You are currently playing on <MapName>"
+            String lower = raw.toLowerCase();
+            String token = "you are currently playing on ";
+            if (lower.contains(token)) {
+                int idx = lower.indexOf(token);
+                String mapName = raw.substring(idx + token.length()).trim();
+                if (!mapName.isEmpty()) {
+                    // Immediately update (bypass debounce) since chat is authoritative for this game
+                    if (!mapName.equalsIgnoreCase(lastMap)) {
+                        lastMap = mapName;
+                        MapDetails details = manager.getDetailsForMap(mapName);
+                        if (details != null) {
+                            logger.info("[BedwarsProv] Map detected (chat): {} -> {}", mapName, details);
+                        } else {
+                            logger.info("[BedwarsProv] Map detected (chat): {} -> no details in maps.json", mapName);
+                        }
+                        if (hudListener != null) hudListener.onMapUpdated(mapName, details);
+                    }
+                }
+                return;
+            }
+
+            // Also handle other chat outputs from /map or similar that contain the map name
+            // Example patterns: "The map is: <MapName>", "Map: <MapName>", etc.
+            if (raw.startsWith("Map:") || raw.toLowerCase().startsWith("the map is") || raw.toLowerCase().startsWith("map:")) {
+                // Fix: escape backslash for Java string so regex '\\s' is valid at runtime
+                String mapName = raw.replaceFirst("(?i)^(the map is[:\\s]*|map[:\\s]*)", "").trim();
+                if (!mapName.isEmpty()) {
+                    if (!mapName.equalsIgnoreCase(lastMap)) {
+                        lastMap = mapName;
+                        MapDetails details = manager.getDetailsForMap(mapName);
+                        if (details != null) {
+                            logger.info("[BedwarsProv] Map detected (chat): {} -> {}", mapName, details);
+                        } else {
+                            logger.info("[BedwarsProv] Map detected (chat): {} -> no details in maps.json", mapName);
+                        }
+                        if (hudListener != null) hudListener.onMapUpdated(mapName, details);
+                    }
+                }
+                // fall through
+            }
+        } catch (Throwable t) {
+            if (logger != null) logger.debug("[BedwarsProv] error parsing chat: {}", t.toString());
+        }
+    }
+
+    // Exposed helper for testing: feed a raw scoreboard line (with formatting) and it will log / return details
     public MapDetails processLine(String raw) {
         String clean = stripFormatting(raw).trim();
         if (clean.startsWith("Map:")) {
@@ -132,6 +191,6 @@ public class ScoreboardMapReader {
 
     private String stripFormatting(String s) {
         if (s == null) return "";
-        return s.replaceAll("(?i)\u00A7[0-9A-FK-OR]", "");
+        return s.replaceAll("(?i)\\u00A7[0-9A-FK-OR]", "");
     }
 }

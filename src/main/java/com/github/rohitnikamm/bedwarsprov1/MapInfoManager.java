@@ -4,6 +4,9 @@ package com.github.rohitnikamm.bedwarsprov1;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Type;
@@ -14,6 +17,7 @@ import java.util.Locale;
 import java.util.Map;
 
 public class MapInfoManager {
+    private static final Logger LOGGER = LogManager.getLogger("BedwarsProv");
     private final Map<String, MapDetails> maps;
 
     public MapInfoManager(String resourcePath) {
@@ -26,20 +30,27 @@ public class MapInfoManager {
                 loaded = new Gson().fromJson(new InputStreamReader(in, StandardCharsets.UTF_8), type);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            LOGGER.error("Failed to load maps resource '{}': {}", resourcePath, e.toString());
             loaded = Collections.emptyMap();
         }
-        // normalize keys to lower-case for case-insensitive lookup
+        // normalize keys to lower-case and stripped form for robust lookup
         Map<String, MapDetails> normalized = new HashMap<>();
         for (Map.Entry<String, MapDetails> e : loaded.entrySet()) {
             if (e.getKey() == null) continue;
-            normalized.put(e.getKey().trim().toLowerCase(Locale.ROOT), e.getValue());
+            String key = normalizeKey(e.getKey());
+            normalized.put(key, e.getValue());
         }
         this.maps = Collections.unmodifiableMap(normalized);
     }
 
     public MapDetails getDetailsForMap(String mapName) {
         if (mapName == null) return null;
-        return maps.get(mapName.trim().toLowerCase(Locale.ROOT));
+        return maps.get(normalizeKey(mapName));
+    }
+
+    private String normalizeKey(String s) {
+        if (s == null) return "";
+        // lower-case, trim, remove non-alphanumeric characters (keep letters and digits)
+        return s.trim().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
     }
 }
