@@ -1,0 +1,137 @@
+package com.github.rohitnikamm.bedwarsprov1;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.scoreboard.Score;
+import net.minecraft.scoreboard.ScoreObjective;
+import net.minecraft.scoreboard.Scoreboard;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
+import net.minecraftforge.fml.common.gameevent.TickEvent;
+import org.apache.logging.log4j.Logger;
+
+public class ScoreboardMapReader {
+    private final Minecraft mc = Minecraft.getMinecraft();
+    private final MapInfoManager manager;
+    private final Logger logger;
+    private final MapUpdateListener hudListener;
+    private String lastMap = null;
+
+    // debounce fields
+    private String candidateMap = null;
+    private int candidateTicks = 0;
+    private static final int REQUIRED_STABLE_TICKS = 2; // require two ticks to avoid fast toggles
+
+    // debug logging
+    private final boolean debug;
+    private int debugCooldown = 0; // ticks until next debug dump
+    private static final int DEBUG_COOLDOWN_TICKS = 100; // rate-limit debug dumps
+
+    public ScoreboardMapReader(MapInfoManager manager, Logger logger, MapUpdateListener hudListener) {
+        this(manager, logger, hudListener, false);
+    }
+
+    public ScoreboardMapReader(MapInfoManager manager, Logger logger, MapUpdateListener hudListener, boolean debug) {
+        this.manager = manager;
+        this.logger = logger;
+        this.hudListener = hudListener;
+        this.debug = debug;
+        MinecraftForge.EVENT_BUS.register(this);
+    }
+
+    @SubscribeEvent
+    public void onClientTick(TickEvent.ClientTickEvent event) {
+        if (mc == null || mc.theWorld == null) return;
+        Scoreboard sb = mc.theWorld.getScoreboard();
+        // try display slot 1 first (sidebar), but also scan all objectives as a fallback
+        ScoreObjective sidebar = sb.getObjectiveInDisplaySlot(1);
+
+        String bestRaw = null;
+
+        if (sidebar != null) {
+            for (Score score : sb.getSortedScores(sidebar)) {
+                String raw = score.getPlayerName();
+                String clean = stripFormatting(raw).trim();
+                if (debug && debugCooldown == 0) {
+                    try { logger.info("[BedwarsProv-debug] sidebar line: '{}' -> cleaned: '{}'", raw, clean); } catch (Throwable t) {}
+                }
+                if (clean.startsWith("Map:")) bestRaw = raw;
+            }
+        }
+
+        // If none found in the displayed sidebar objective, scan all objectives to be thorough
+        if (bestRaw == null) {
+            for (ScoreObjective obj : sb.getScoreObjectives()) {
+                try {
+                    for (Score score : sb.getSortedScores(obj)) {
+                        String raw = score.getPlayerName();
+                        String clean = stripFormatting(raw).trim();
+                        if (debug && debugCooldown == 0) {
+                            try { logger.info("[BedwarsProv-debug] obj='{}' line: '{}' -> cleaned: '{}'", obj.getName(), raw, clean); } catch (Throwable t) {}
+                        }
+                        if (clean.startsWith("Map:")) bestRaw = raw; // last seen wins
+                    }
+                } catch (Throwable t) {
+                    // some objectives may throw in different mappings; ignore them
+                }
+                if (bestRaw != null) break; // stop early if found
+            }
+        }
+
+        if (debug && debugCooldown == 0) debugCooldown = DEBUG_COOLDOWN_TICKS;
+        if (debugCooldown > 0) debugCooldown--;
+
+        if (bestRaw != null) {
+            String clean = stripFormatting(bestRaw).trim();
+            String mapName = clean.substring("Map:".length()).trim();
+            // debounce logic
+            if (candidateMap == null || !candidateMap.equalsIgnoreCase(mapName)) {
+                candidateMap = mapName;
+                candidateTicks = 1;
+            } else {
+                candidateTicks++;
+            }
+
+            if (candidateTicks >= REQUIRED_STABLE_TICKS) {
+                if (!mapName.equalsIgnoreCase(lastMap)) {
+                    lastMap = mapName;
+                    MapDetails details = manager.getDetailsForMap(mapName);
+                    if (details != null) {
+                        logger.info("[BedwarsProv] Map detected: {} -> {}", mapName, details);
+                    } else {
+                        logger.info("[BedwarsProv] Map detected: {} -> no details in maps.json", mapName);
+                    }
+                    if (hudListener != null) hudListener.onMapUpdated(mapName, details);
+                }
+                candidateTicks = 0;
+                candidateMap = null;
+            }
+        } else {
+            candidateMap = null;
+            candidateTicks = 0;
+        }
+    }
+
+    public MapDetails processLine(String raw) {
+        String clean = stripFormatting(raw).trim();
+        if (clean.startsWith("Map:")) {
+            String mapName = clean.substring("Map:".length()).trim();
+            if (!mapName.equalsIgnoreCase(lastMap)) {
+                lastMap = mapName;
+                MapDetails details = manager.getDetailsForMap(mapName);
+                if (details != null) {
+                    logger.info("[BedwarsProv] Map detected: {} -> {}", mapName, details);
+                } else {
+                    logger.info("[BedwarsProv] Map detected: {} -> no details in maps.json", mapName);
+                }
+                if (hudListener != null) hudListener.onMapUpdated(mapName, details);
+                return details;
+            }
+        }
+        return null;
+    }
+
+    private String stripFormatting(String s) {
+        if (s == null) return "";
+        return s.replaceAll("(?i)\u00A7[0-9A-FK-OR]", "");
+    }
+}
